@@ -1,3 +1,9 @@
+import {
+  createMapSignalState,
+  isMapSignalState,
+  MapSignal,
+  type MapSignalState,
+} from "./MapSignal";
 import { ComputedSignal, Signal } from "./reactive";
 import type {
   ReadableSignal,
@@ -15,6 +21,7 @@ type SignalReference = {
 
 export class SignalsRoot {
   private readonly signalsByID = new Map<number, Signal<unknown>>();
+  private readonly mapsByID = new Map<number, MapSignal<unknown, unknown>>();
   private readonly changeRecorders = new Set<SignalsChanges>();
   private readonly operationListeners = new Set<
     (operation: SignalOperation) => void
@@ -66,18 +73,38 @@ export class SignalsRoot {
     return this.createSignalWithID(id, initialValue);
   }
 
+  public map<K, V>(): MapSignal<K, V> {
+    const stateSignal = this.signal(createMapSignalState<K, V>([]));
+    const mapSignal = this.createMapFromStateSignal(stateSignal);
+    this.mapsByID.set(stateSignal.id, mapSignal as MapSignal<unknown, unknown>);
+    return mapSignal;
+  }
+
   public computed<T>(compute: () => T): ReadableSignal<T> {
     return SignalsRoot.computed(compute);
   }
 
-  public fromID<T>(id: number): WritableSignal<T> {
+  public fromID<T>(id: number): T {
+    const existingMap = this.mapsByID.get(id);
+    if (existingMap !== undefined) {
+      return existingMap as T;
+    }
+
     const signal = this.signalsByID.get(id);
 
     if (signal === undefined) {
       throw new Error(`Signal with id ${id} was not found.`);
     }
 
-    return signal as WritableSignal<T>;
+    if (isMapSignalState(signal.get())) {
+      const mapSignal = this.createMapFromStateSignal(
+        signal as WritableSignal<MapSignalState<unknown, unknown>>,
+      );
+      this.mapsByID.set(id, mapSignal as MapSignal<unknown, unknown>);
+      return mapSignal as T;
+    }
+
+    return signal as T;
   }
 
   public copyState(): SignalsState {
@@ -387,5 +414,13 @@ export class SignalsRoot {
     }
 
     return typeof value.__sharedSignalRef === "number";
+  }
+
+  private createMapFromStateSignal<K, V>(
+    stateSignal: WritableSignal<MapSignalState<K, V>>,
+  ): MapSignal<K, V> {
+    return new MapSignal<K, V>(stateSignal, (initialValue) => {
+      return this.signal(initialValue);
+    });
   }
 }
