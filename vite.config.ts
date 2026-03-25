@@ -21,6 +21,6 @@ export default defineConfig({
   test: {
     environment: "node",
     benchmark: {},
-    include: ["./js/tests/**/*.test.ts"],
+    include: ["./tests/**/*.test.ts"],
   },
 });
