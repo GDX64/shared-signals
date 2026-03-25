@@ -38,5 +38,19 @@ describe("browser replication", () => {
 
     const signalValue3 = await controlPort.read();
     expect(signalValue3).toBe(10);
+
+    // test nested signals
+
+    const counter = root.signal(0);
+    const nested = root.signal({
+      counter,
+    });
+    counter.set(5);
+    controlPort.postMessage(nested.id);
+
+    const nestedEchoValue = await controlPort.read();
+    expect(nestedEchoValue).toBe(5);
+    const nestedEchoValue2 = await controlPort.read();
+    expect(nestedEchoValue2).toBe(11);
   });
 });

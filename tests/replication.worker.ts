@@ -1,4 +1,9 @@
-import { SigChannel, SignalsRoot, SignalOperation } from "../src/lib";
+import {
+  SigChannel,
+  SignalsRoot,
+  SignalOperation,
+  WritableSignal,
+} from "../src/lib";
 
 const controlPort = SigChannel.fromWorkerContext<any>(self, "control");
 const replicationPort = SigChannel.fromWorkerContext<SignalOperation>(
@@ -32,6 +37,15 @@ async function main(): Promise<void> {
   await signal.setAsync(10);
   const updatedValue = signal.get();
   controlPort.postMessage(updatedValue);
+
+  // test nested signals
+
+  const nestedID = await controlPort.read();
+  const nested = root.fromID<{ counter: WritableSignal<number> }>(nestedID);
+
+  controlPort.postMessage(nested.get().counter.get());
+  await nested.get().counter.setAsync(11);
+  controlPort.postMessage(nested.get().counter.get());
 }
 
 void main();
