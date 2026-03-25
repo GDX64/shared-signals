@@ -19,14 +19,32 @@ export type SignalsState = {
   values: Array<{ id: number; value: unknown }>;
 };
 
+export type SignalChange =
+  | { type: "create"; id: number; value: unknown }
+  | { type: "set"; id: number; value: unknown };
+
+export type SignalsChanges = {
+  changes: SignalChange[];
+};
+
+type SignalReference = {
+  __sharedSignalRef: number;
+};
+
 class Signal<T> implements WritableSignal<T>, Dependency {
   public readonly id: number;
   private value: T;
   private readonly subscribers = new Set<ComputedSignal<unknown>>();
+  private readonly onSet?: (id: number, value: unknown) => void;
 
-  public constructor(id: number, initialValue: T) {
+  public constructor(
+    id: number,
+    initialValue: T,
+    onSet?: (id: number, value: unknown) => void,
+  ) {
     this.id = id;
     this.value = initialValue;
+    this.onSet = onSet;
   }
 
   public get(): T {
@@ -44,6 +62,7 @@ class Signal<T> implements WritableSignal<T>, Dependency {
     }
 
     this.value = value;
+    this.onSet?.(this.id, value);
 
     for (const subscriber of this.subscribers) {
       subscriber.markDirty();
@@ -132,6 +151,7 @@ class ComputedSignal<T> implements ReadableSignal<T>, Dependency {
 
 export class SignalsRoot {
   private readonly signalsByID = new Map<number, Signal<unknown>>();
+  private readonly changeRecorders = new Set<SignalsChanges>();
   private nextID = 1;
 
   public static create(): SignalsRoot {
@@ -143,7 +163,12 @@ export class SignalsRoot {
     root.nextID = state.nextID;
 
     for (const entry of state.values) {
-      root.createSignalWithID(entry.id, entry.value);
+      root.createSignalWithID(entry.id, undefined);
+    }
+
+    for (const entry of state.values) {
+      const signal = root.fromID<unknown>(entry.id);
+      signal.set(root.deserializeValue(entry.value));
     }
 
     return root;
@@ -178,7 +203,7 @@ export class SignalsRoot {
     const values: Array<{ id: number; value: unknown }> = [];
 
     for (const [id, signal] of this.signalsByID) {
-      values.push({ id, value: signal.get() });
+      values.push({ id, value: this.serializeValue(signal.get()) });
     }
 
     return {
@@ -187,14 +212,160 @@ export class SignalsRoot {
     };
   }
 
+  public recordChanges(): SignalsChanges {
+    const recorder: SignalsChanges = {
+      changes: [],
+    };
+
+    this.changeRecorders.add(recorder);
+    return recorder;
+  }
+
+  public applyChanges(changes: SignalsChanges): void {
+    for (const change of changes.changes) {
+      const value = this.deserializeValue(change.value);
+
+      if (change.type === "create") {
+        if (!this.signalsByID.has(change.id)) {
+          this.createSignalWithID(change.id, value);
+          continue;
+        }
+
+        const signal = this.signalsByID.get(change.id);
+        if (signal !== undefined) {
+          (signal as WritableSignal<unknown>).set(value);
+        }
+        continue;
+      }
+
+      const existing = this.signalsByID.get(change.id);
+      if (existing === undefined) {
+        this.createSignalWithID(change.id, value);
+        continue;
+      }
+
+      (existing as WritableSignal<unknown>).set(value);
+    }
+  }
+
   private createSignalWithID<T>(id: number, initialValue: T): Signal<T> {
-    const signal = new Signal(id, initialValue);
+    const signal = new Signal(id, initialValue, (signalID, value) => {
+      this.pushChange({ type: "set", id: signalID, value });
+    });
     this.signalsByID.set(id, signal as Signal<unknown>);
+    this.pushChange({ type: "create", id, value: initialValue });
 
     if (id >= this.nextID) {
       this.nextID = id + 1;
     }
 
     return signal;
+  }
+
+  private pushChange(change: SignalChange): void {
+    const serializedChange: SignalChange = {
+      ...change,
+      value: this.serializeValue(change.value),
+    };
+
+    for (const recorder of this.changeRecorders) {
+      recorder.changes.push(serializedChange);
+    }
+  }
+
+  private serializeValue(
+    value: unknown,
+    visited = new WeakMap<object, unknown>(),
+  ): unknown {
+    if (value instanceof Signal) {
+      return {
+        __sharedSignalRef: value.id,
+      } satisfies SignalReference;
+    }
+
+    if (typeof value !== "object" || value === null) {
+      return value;
+    }
+
+    const cached = visited.get(value);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    if (Array.isArray(value)) {
+      const arrayResult: unknown[] = [];
+      visited.set(value, arrayResult);
+
+      for (const item of value) {
+        arrayResult.push(this.serializeValue(item, visited));
+      }
+
+      return arrayResult;
+    }
+
+    const result = Object.create(Object.getPrototypeOf(value)) as Record<
+      string,
+      unknown
+    >;
+    visited.set(value, result);
+
+    for (const [key, item] of Object.entries(value)) {
+      result[key] = this.serializeValue(item, visited);
+    }
+
+    return result;
+  }
+
+  private deserializeValue(
+    value: unknown,
+    visited = new WeakMap<object, unknown>(),
+  ): unknown {
+    if (this.isSignalReference(value)) {
+      return this.fromID(value.__sharedSignalRef);
+    }
+
+    if (typeof value !== "object" || value === null) {
+      return value;
+    }
+
+    const cached = visited.get(value);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    if (Array.isArray(value)) {
+      const arrayResult: unknown[] = [];
+      visited.set(value, arrayResult);
+
+      for (const item of value) {
+        arrayResult.push(this.deserializeValue(item, visited));
+      }
+
+      return arrayResult;
+    }
+
+    const result = Object.create(Object.getPrototypeOf(value)) as Record<
+      string,
+      unknown
+    >;
+    visited.set(value, result);
+
+    for (const [key, item] of Object.entries(value)) {
+      result[key] = this.deserializeValue(item, visited);
+    }
+
+    return result;
+  }
+
+  private isSignalReference(value: unknown): value is SignalReference {
+    if (typeof value !== "object" || value === null) {
+      return false;
+    }
+
+    if (!("__sharedSignalRef" in value)) {
+      return false;
+    }
+
+    return typeof value.__sharedSignalRef === "number";
   }
 }
