@@ -24,14 +24,13 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "npm run check && npm run wasm && vite build",
+    "build": "npm run check && vite build",
     "preview": "vite preview",
     "check": "tsc --build",
     "test": "vitest",
     "bench": "vitest bench",
     "test:browser": "vitest --config=vitest.browser.config.ts",
     "test-ci": "vitest --run & vitest --config=vitest.browser.config.ts --run --browser.headless & cargo test",
-    "wasm": "cargo wasm && wasm-bindgen --target web --out-dir ./js/pkg ./target/wasm32-unknown-unknown/release/shared_heap.wasm",
     "deploy": "npm run build && npm run test-ci && npm publish --access public"
   },
   "devDependencies": {
@@ -45,9 +44,6 @@
   },
   "overrides": {
     "vite": "npm:rolldown-vite@7.2.5"
-  },
-  "dependencies": {
-    "vue": "^3.5.30"
   },
   "keywords": [
     "storage",
