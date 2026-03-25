@@ -12,6 +12,7 @@ export type ReadableSignal<T> = {
 export type WritableSignal<T> = ReadableSignal<T> & {
   readonly id: number;
   set(value: T): void;
+  setAsync(value: T): Promise<void>;
 };
 
 export type SignalsState = {
@@ -21,7 +22,15 @@ export type SignalsState = {
 
 export type SignalChange =
   | { type: "create"; id: number; value: unknown }
-  | { type: "set"; id: number; value: unknown };
+  | { type: "set"; id: number; value: unknown; requestID?: number };
+
+export type SignalOperation = SignalChange;
+export type SignalAsyncRequest = {
+  type: "set-async";
+  id: number;
+  value: unknown;
+  requestID: number;
+};
 
 export type SignalsChanges = {
   changes: SignalChange[];
@@ -36,15 +45,21 @@ class Signal<T> implements WritableSignal<T>, Dependency {
   private value: T;
   private readonly subscribers = new Set<ComputedSignal<unknown>>();
   private readonly onSet?: (id: number, value: unknown) => void;
+  private readonly onAsyncSet?: (id: number, value: unknown) => Promise<void>;
+  private readonly canSetSynchronously: () => boolean;
 
   public constructor(
     id: number,
     initialValue: T,
+    canSetSynchronously: () => boolean,
     onSet?: (id: number, value: unknown) => void,
+    onAsyncSet?: (id: number, value: unknown) => Promise<void>,
   ) {
     this.id = id;
     this.value = initialValue;
+    this.canSetSynchronously = canSetSynchronously;
     this.onSet = onSet;
+    this.onAsyncSet = onAsyncSet;
   }
 
   public get(): T {
@@ -57,6 +72,28 @@ class Signal<T> implements WritableSignal<T>, Dependency {
   }
 
   public set(value: T): void {
+    if (!this.canSetSynchronously()) {
+      throw new Error("Synchronous writes are disabled for this signal root.");
+    }
+
+    this.setWithoutGuards(value);
+  }
+
+  public async setAsync(value: T): Promise<void> {
+    if (this.onAsyncSet !== undefined) {
+      await this.onAsyncSet(this.id, value);
+      return;
+    }
+
+    await Promise.resolve();
+    this.setWithoutGuards(value);
+  }
+
+  public setFromOperation(value: T): void {
+    this.setWithoutGuards(value);
+  }
+
+  private setWithoutGuards(value: T): void {
     if (Object.is(this.value, value)) {
       return;
     }
@@ -152,14 +189,29 @@ class ComputedSignal<T> implements ReadableSignal<T>, Dependency {
 export class SignalsRoot {
   private readonly signalsByID = new Map<number, Signal<unknown>>();
   private readonly changeRecorders = new Set<SignalsChanges>();
+  private readonly operationListeners = new Set<
+    (operation: SignalOperation) => void
+  >();
+  private readonly asyncRequestListeners = new Set<
+    (request: SignalAsyncRequest) => void
+  >();
+  private suppressRecording = false;
+  private activeRequestID: number | undefined = undefined;
+  private nextRequestID = 1;
+  private readonly pendingAsyncRequests = new Map<number, () => void>();
   private nextID = 1;
 
+  private constructor(
+    private readonly allowSynchronousSet: boolean,
+    private readonly emitLocalOperations: boolean,
+  ) {}
+
   public static create(): SignalsRoot {
-    return new SignalsRoot();
+    return new SignalsRoot(true, true);
   }
 
   public static fromState(state: SignalsState): SignalsRoot {
-    const root = new SignalsRoot();
+    const root = new SignalsRoot(false, false);
     root.nextID = state.nextID;
 
     for (const entry of state.values) {
@@ -167,8 +219,10 @@ export class SignalsRoot {
     }
 
     for (const entry of state.values) {
-      const signal = root.fromID<unknown>(entry.id);
-      signal.set(root.deserializeValue(entry.value));
+      const signal = root.signalsByID.get(entry.id);
+      if (signal !== undefined) {
+        signal.setFromOperation(root.deserializeValue(entry.value));
+      }
     }
 
     return root;
@@ -221,6 +275,91 @@ export class SignalsRoot {
     return recorder;
   }
 
+  public onChange(listener: (operation: SignalOperation) => void): () => void {
+    if (!this.emitLocalOperations) {
+      throw new Error("Replicas cannot emit onChange events.");
+    }
+
+    this.operationListeners.add(listener);
+
+    return () => {
+      this.operationListeners.delete(listener);
+    };
+  }
+
+  public onAsyncRequest(
+    listener: (request: SignalAsyncRequest) => void,
+  ): () => void {
+    if (this.allowSynchronousSet) {
+      throw new Error("Only replicas can emit async requests.");
+    }
+
+    this.asyncRequestListeners.add(listener);
+
+    return () => {
+      this.asyncRequestListeners.delete(listener);
+    };
+  }
+
+  public applyOperation(operation: SignalOperation | SignalAsyncRequest): void {
+    if (operation.type === "set-async") {
+      if (!this.allowSynchronousSet) {
+        return;
+      }
+
+      const ackOperation: SignalOperation = {
+        type: "set",
+        id: operation.id,
+        value: operation.value,
+        requestID: operation.requestID,
+      };
+
+      for (const listener of this.operationListeners) {
+        listener(ackOperation);
+      }
+      return;
+    }
+
+    const value = this.deserializeValue(operation.value);
+    this.suppressRecording = true;
+    this.activeRequestID =
+      operation.type === "set" ? operation.requestID : undefined;
+
+    try {
+      if (operation.type === "create") {
+        if (!this.signalsByID.has(operation.id)) {
+          this.createSignalWithID(operation.id, value);
+          return;
+        }
+
+        const existing = this.signalsByID.get(operation.id);
+        if (existing !== undefined) {
+          existing.setFromOperation(value);
+        }
+        return;
+      }
+
+      const existing = this.signalsByID.get(operation.id);
+      if (existing === undefined) {
+        this.createSignalWithID(operation.id, value);
+        return;
+      }
+
+      existing.setFromOperation(value);
+
+      if (operation.requestID !== undefined) {
+        const resolve = this.pendingAsyncRequests.get(operation.requestID);
+        if (resolve !== undefined) {
+          this.pendingAsyncRequests.delete(operation.requestID);
+          resolve();
+        }
+      }
+    } finally {
+      this.activeRequestID = undefined;
+      this.suppressRecording = false;
+    }
+  }
+
   public applyChanges(changes: SignalsChanges): void {
     for (const change of changes.changes) {
       const value = this.deserializeValue(change.value);
@@ -233,7 +372,7 @@ export class SignalsRoot {
 
         const signal = this.signalsByID.get(change.id);
         if (signal !== undefined) {
-          (signal as WritableSignal<unknown>).set(value);
+          signal.setFromOperation(value);
         }
         continue;
       }
@@ -244,14 +383,28 @@ export class SignalsRoot {
         continue;
       }
 
-      (existing as WritableSignal<unknown>).set(value);
+      existing.setFromOperation(value);
     }
   }
 
   private createSignalWithID<T>(id: number, initialValue: T): Signal<T> {
-    const signal = new Signal(id, initialValue, (signalID, value) => {
-      this.pushChange({ type: "set", id: signalID, value });
-    });
+    const signal = new Signal(
+      id,
+      initialValue,
+      () => {
+        return this.allowSynchronousSet;
+      },
+      (signalID, value) => {
+        this.pushChange({ type: "set", id: signalID, value });
+      },
+      (signalID, value) => {
+        return this.pushAsyncRequest({
+          type: "set-async",
+          id: signalID,
+          value,
+        });
+      },
+    );
     this.signalsByID.set(id, signal as Signal<unknown>);
     this.pushChange({ type: "create", id, value: initialValue });
 
@@ -262,14 +415,54 @@ export class SignalsRoot {
     return signal;
   }
 
+  private pushAsyncRequest(
+    request: Omit<SignalAsyncRequest, "requestID">,
+  ): Promise<void> {
+    if (this.allowSynchronousSet) {
+      return Promise.resolve();
+    }
+
+    const requestID = this.nextRequestID;
+    this.nextRequestID += 1;
+
+    const serializedRequest: SignalAsyncRequest = {
+      ...request,
+      requestID,
+      value: this.serializeValue(request.value),
+    };
+
+    const promise = new Promise<void>((resolve) => {
+      this.pendingAsyncRequests.set(requestID, resolve);
+    });
+
+    for (const listener of this.asyncRequestListeners) {
+      listener(serializedRequest);
+    }
+
+    return promise;
+  }
+
   private pushChange(change: SignalChange): void {
     const serializedChange: SignalChange = {
       ...change,
+      ...(change.type === "set" && this.activeRequestID !== undefined
+        ? { requestID: this.activeRequestID }
+        : {}),
       value: this.serializeValue(change.value),
     };
 
-    for (const recorder of this.changeRecorders) {
-      recorder.changes.push(serializedChange);
+    if (!this.suppressRecording) {
+      for (const recorder of this.changeRecorders) {
+        recorder.changes.push(serializedChange);
+      }
+    }
+
+    if (!this.emitLocalOperations) {
+      return;
+    }
+
+    for (const listener of this.operationListeners) {
+      listener(serializedChange);
     }
   }
 

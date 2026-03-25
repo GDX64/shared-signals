@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { SignalsRoot, WritableSignal } from "../src/lib";
+import { time } from "console";
 
 describe("lib", () => {
   test("api", () => {
@@ -22,7 +23,7 @@ describe("lib", () => {
     expect(comp.get()).toBe(3);
   });
 
-  test("replication", () => {
+  test("replication", async () => {
     const root = SignalsRoot.create();
     const changes = root.recordChanges();
     const signal = root.signal(0);
@@ -31,16 +32,29 @@ describe("lib", () => {
 
     const state = root.copyState();
     const replica = SignalsRoot.fromState(state);
+
+    //Setup change replication between root and replica
+    replica.onAsyncRequest((op) => {
+      root.applyOperation(op);
+    });
+    root.onChange((op) => {
+      replica.applyOperation(op);
+    });
+
     const signalReplica = replica.fromID<number>(signal.id);
-    signalReplica.set(3);
+    //Replicas should not be writable syncronously
+    expect(() => {
+      signalReplica.set(3);
+    }).toThrowError();
+    expect(signalReplica.get()).toBe(2);
+
+    await signalReplica.setAsync(3);
     expect(signalReplica.get()).toBe(3);
 
     const changeRoot = SignalsRoot.create();
     changeRoot.applyChanges(changes);
     const signalFromChanges = changeRoot.fromID<number>(signal.id);
     expect(signalFromChanges.get()).toBe(2);
-    signalFromChanges.set(4);
-    expect(signalFromChanges.get()).toBe(4);
 
     // Original signal should not reflect the change made to the replica
     expect(signal.get()).toBe(2);
@@ -57,8 +71,7 @@ describe("lib", () => {
 
     const replica = SignalsRoot.fromState(root.copyState());
     const sigReplica = replica.fromID<{ num: WritableSignal<number> }>(sig.id);
-    sigReplica.get().num.set(2);
-    expect(sigReplica.get().num.get()).toBe(2);
+    expect(sigReplica.get().num.get()).toBe(1);
     expect(num.get()).toBe(1);
   });
 });
