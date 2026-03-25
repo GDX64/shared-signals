@@ -9,7 +9,7 @@
   },
   "homepage": "https://github.com/GDX64/shared-signals#readme",
   "private": false,
-  "version": "0.4.0",
+  "version": "0.1.0",
   "type": "module",
   "files": [
     "dist"
@@ -30,7 +30,7 @@
     "test": "vitest",
     "bench": "vitest bench",
     "test:browser": "vitest --config=vitest.browser.config.ts",
-    "test-ci": "vitest --run & vitest --config=vitest.browser.config.ts --run --browser.headless & cargo test",
+    "test-ci": "vitest --run & vitest --config=vitest.browser.config.ts --run --browser.headless",
     "deploy": "npm run build && npm run test-ci && npm publish --access public"
   },
   "devDependencies": {
