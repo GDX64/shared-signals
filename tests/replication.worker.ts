@@ -1,9 +1,5 @@
-import {
-  SigChannel,
-  SignalsRoot,
-  SignalOperation,
-  WritableSignal,
-} from "../src/lib";
+import { SigChannel, SignalsRoot } from "../src/lib.ts";
+import type { SignalOperation, WritableSignal } from "../src/lib.ts";
 
 const controlPort = SigChannel.fromWorkerContext<any>(self, "control");
 const replicationPort = SigChannel.fromWorkerContext<SignalOperation>(

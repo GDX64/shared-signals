@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { SigChannel, SignalOperation, SignalsRoot } from "../src/lib";
+import { SigChannel, SignalsRoot } from "../src/lib.ts";
+import type { SignalOperation } from "../src/lib.ts";
 import TestWorker from "./replication.worker.ts?worker";
 
 describe("browser replication", () => {
