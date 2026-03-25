@@ -26,7 +26,7 @@ export type SignalChange =
   | { type: "create"; id: number; value: unknown }
   | { type: "set"; id: number; value: unknown; requestID?: number };
 
-export type SignalOperation = SignalChange;
+export type SignalOperation = SignalChange | SignalAsyncRequest;
 export type SignalAsyncRequest = {
   type: "set-async";
   id: number;

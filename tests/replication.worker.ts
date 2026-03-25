@@ -1,25 +1,34 @@
-import { SigChannel, SignalsRoot } from "../src/lib";
+import { SigChannel, SignalsRoot, SignalOperation } from "../src/lib";
 
-const controlPort = SigChannel.fromWorkerContext(self, "control");
-const replicationPort = SigChannel.fromWorkerContext(self, "replication");
-
-const root = SignalsRoot.create();
-replicationPort.onMessage((op) => {
-  root.applyOperation(op);
-});
-root.onChange((op) => {
-  replicationPort.postMessage(op);
-});
+const controlPort = SigChannel.fromWorkerContext<any>(self, "control");
+const replicationPort = SigChannel.fromWorkerContext<SignalOperation>(
+  self,
+  "replication",
+);
 
 async function main(): Promise<void> {
   await controlPort.read();
   controlPort.postMessage("ready");
-  const signalID = await controlPort.read();
+
+  const setup = await controlPort.read();
+  const root = SignalsRoot.fromState(setup.state);
+
+  replicationPort.onMessage((op) => {
+    root.applyOperation(op);
+  });
+  root.onAsyncRequest((op) => {
+    replicationPort.postMessage(op);
+  });
+
+  const signalID = setup.signalID;
   const signal = root.fromID<number>(signalID);
+
   controlPort.postMessage(signal.get());
+
   await controlPort.read();
   const newValue = signal.get();
   controlPort.postMessage(newValue);
+
   await signal.setAsync(10);
   const updatedValue = signal.get();
   controlPort.postMessage(updatedValue);
