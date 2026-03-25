@@ -10,7 +10,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["./js/browser-tests/**/*.test.ts"],
+    include: ["./tests/**/*.browser.test.ts"],
     browser: {
       enabled: true,
       provider: playwright(),

@@ -1,3 +1,5 @@
+export { SigChannel } from "./SigChannel";
+
 type Dependency = {
   addSubscriber(subscriber: ComputedSignal<unknown>): void;
   removeSubscriber(subscriber: ComputedSignal<unknown>): void;

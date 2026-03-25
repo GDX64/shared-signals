@@ -1,6 +1,5 @@
 import { describe, expect, test } from "vitest";
 import { SignalsRoot, WritableSignal } from "../src/lib";
-import { time } from "console";
 
 describe("lib", () => {
   test("api", () => {
