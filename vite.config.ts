@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [dts()],
   build: {
     lib: {
-      entry: resolve(__dirname, "./js/src/lib.ts"),
+      entry: resolve(__dirname, "./src/lib.ts"),
       name: "AnyStore",
       fileName: (format) => `lib.${format}.js`,
       formats: ["es"],
