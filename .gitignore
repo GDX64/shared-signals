@@ -1,0 +1,6 @@
+/target
+node_modules
+/output
+dist
+dist-ts
+pkg

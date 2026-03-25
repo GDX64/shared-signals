@@ -1,0 +1,63 @@
+{
+  "name": "@glmachado/shared-signals",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GDX64/shared-signals.git"
+  },
+  "bugs": {
+    "url": "https://github.com/GDX64/shared-signals/issues"
+  },
+  "homepage": "https://github.com/GDX64/shared-signals#readme",
+  "private": false,
+  "version": "0.4.0",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "module": "./dist/lib.js",
+  "types": "./dist/src/lib.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/lib.es.js",
+      "types": "./dist/src/lib.d.ts"
+    }
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run check && npm run wasm && vite build",
+    "preview": "vite preview",
+    "check": "tsc --build",
+    "test": "vitest",
+    "bench": "vitest bench",
+    "test:browser": "vitest --config=vitest.browser.config.ts",
+    "test-ci": "vitest --run & vitest --config=vitest.browser.config.ts --run --browser.headless & cargo test",
+    "wasm": "cargo wasm && wasm-bindgen --target web --out-dir ./js/pkg ./target/wasm32-unknown-unknown/release/shared_heap.wasm",
+    "deploy": "npm run build && npm run test-ci && npm publish --access public"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.3",
+    "@vitest/browser-playwright": "^4.0.18",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.3",
+    "vite": "npm:rolldown-vite@7.2.5",
+    "vite-plugin-dts": "^4.5.4",
+    "vitest": "^4.0.16"
+  },
+  "overrides": {
+    "vite": "npm:rolldown-vite@7.2.5"
+  },
+  "dependencies": {
+    "vue": "^3.5.30"
+  },
+  "keywords": [
+    "storage",
+    "embedded",
+    "database",
+    "WebWorkers",
+    "signals",
+    "shared memory",
+    "SharedArrayBuffer",
+    "wasm",
+    "WebAssembly"
+  ]
+}
